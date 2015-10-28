@@ -59,9 +59,13 @@ def PICO_embed(path="tagged_data/cohen/ACEInhibitors_processed_PICO.tsv", d2v=No
     for p, i, o, lbl, pmid in PICO_data[["P", "I", "O", "y", "pmid"]].values:
         pmids.append(pmid)
 
-        pv = d2v.infer_vector(p)
-        iv = d2v.infer_vector(i)
+        pv = d2v.infer_vector(p)         
+        pv = pv - pv.min()
+        iv = d2v.infer_vector(i) 
+        iv = iv - iv.min() 
         ov = d2v.infer_vector(o)
+        ov = ov - ov.min()
+        #pdb.set_trace()
 
         '''
         note to self; i actually think a PICO matrix 
@@ -86,18 +90,37 @@ def load_texts(path="input_data/cohen/ACEInhibitors_processed.csv"):
                     names =["pmid", "title", "authors", "journal", "abstract", "keywords", "label"])
     return citation_data
 
+
 def get_tfidf_X_y(path="input_data/cohen/ACEInhibitors_processed.csv"):
     citation_data = load_texts(path=path) 
     pmids, texts = [], []
     for pmid, title, abstract, mesh in citation_data[["pmid", "title", "abstract", "keywords"]].values:
         pmids.append(pmid)
         mesh_words = " ".join(["MH_%s" % mh_term.strip().replace("-", "_") for mh_term in mesh.split(",")])
+        #mesh_words = " "
         title_words = " ".join(["TI_%s" % w.strip() for w in title.split(" ")])
         texts.append(" ".join((title_words, abstract, mesh_words)))
 
     v = TfidfVectorizer(ngram_range=(1,2), min_df=3, max_features=50000)
     X_text = v.fit_transform(texts)
     return dict(zip(pmids, X_text)), v
+
+def get_naive_embedding(path="input_data/cohen/ACEInhibitors_processed.csv"):
+    d2v = load_trained_model() 
+
+    citation_data = load_texts(path=path) 
+    pmids, texts, vecs = [], [], []
+    for pmid, title, abstract, mesh in citation_data[["pmid", "title", "abstract", "keywords"]].values:
+        pmids.append(pmid)
+        cur_text = " ".join((title, abstract))
+        texts.append(cur_text)
+        vecs.append(d2v.infer_vector(cur_text))
+        #pdb.set_trace()
+
+    #TfidfVectorizer(ngram_range=(1,2), min_df=3, max_features=50000)
+    #X_text = v.fit_transform(texts)
+    #return dict(zip(pmids, X_text)), v
+    return dict(zip(pmids, vecs))
 
 def run_exp_for_X_y(X, y, model="SGD"):
     if model == "SGD":    
@@ -118,6 +141,7 @@ def run_exp_for_X_y(X, y, model="SGD"):
 def classification_exp():
     pmids, X, y = PICO_embed()
     res = run_exp_for_X_y(X,y)
+    run_exp_for_X_y(X, y)
 
     # now with text 
     X_tfidf_d, v = get_tfidf_X_y()
@@ -126,7 +150,7 @@ def classification_exp():
         X2.append(X_tfidf_d[pmid])
 
     X2 = sp.sparse.vstack(X2)
-    res2 = run_exp_for_X_y(X2, y, model="SVM")
+    res2 = run_exp_for_X_y(X2, y)
 
     # now with both
     X3 = []
@@ -135,5 +159,25 @@ def classification_exp():
     X3 = sp.sparse.vstack(X3)
     res3 = run_exp_for_X_y(X3, y)
 
-    return res, res2, res3
+    # one more!
+    X_embedded_d = get_naive_embedding()
+    X4 = []
+    for pmid in pmids:
+        X4.append(X_embedded_d[pmid])
+    #pdb.set_trace()
+    X4 = np.vstack(X4) #sp.sparse.vstack(X4)
+    #pdb.set_trace()
+    res4 = run_exp_for_X_y(X4, y)
+
+    # one more!
+   
+    X5 = []
+    for i in range(X.shape[0]):
+        X5.append(sp.sparse.hstack((X[i,:], X4[i,:])))
+
+    #pdb.set_trace()
+    X5 = sp.sparse.vstack(X5)
+    res5 = run_exp_for_X_y(X5, y)
+
+    return res, res2, res3, res4, res5
 
